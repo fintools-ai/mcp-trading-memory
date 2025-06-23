@@ -8,7 +8,7 @@
 
 **Trading memory system for AI assistants via Model Context Protocol (MCP)**
 
-Persistent memory capabilities designed for trade-copilot integration. Prevents contradictory signals, maintains trading context, and enforces consistency across trading sessions.
+Persistent memory capabilities designed for [trade-copilot](https://github.com/fintools-ai/trade-copilot) integration. Prevents contradictory signals, maintains trading context, and enforces consistency across trading sessions.
 
 ## Architecture Overview
 
