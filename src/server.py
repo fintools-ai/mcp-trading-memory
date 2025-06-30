@@ -50,7 +50,7 @@ class TradingMemoryServer:
         self._register_tools()
 
     def _register_tools(self):
-        @self.app.tool()
+        @self.app.tool(description=self.get_current_bias_tool.description)
         async def get_current_bias(symbol: str) -> Dict[str, Any]:
             if not self.server_ready:
                 self.logger.warning("Tool get_current_bias called before server ready")
@@ -82,7 +82,7 @@ class TradingMemoryServer:
                     "fallback": "Continue without memory context"
                 }
 
-        @self.app.tool()
+        @self.app.tool(description=self.store_trading_decision_tool.description)
         async def store_trading_decision(symbol: str, decision_type: str, content: Dict[str, Any]) -> Dict[str, Any]:
             if not self.server_ready:
                 self.logger.warning("Tool store_trading_decision called before server ready")
@@ -118,7 +118,7 @@ class TradingMemoryServer:
                     "message": f"Failed to store decision: {str(e)}",
                 }
 
-        @self.app.tool()
+        @self.app.tool(description=self.check_consistency_tool.description)
         async def check_consistency(symbol: str, proposed_bias: str, reasoning: str,
                                     proposed_action: Optional[str] = None,
                                     override_time_gate: bool = False,
@@ -172,7 +172,7 @@ class TradingMemoryServer:
                     "guidance": "Tool execution failed, consider manual override or retry",
                 }
 
-        @self.app.tool()
+        @self.app.tool(description=self.force_reset_tool.description)
         async def force_reset(symbol: str, confirm: bool, reason: str) -> Dict[str, Any]:
             if not self.server_ready:
                 self.logger.warning("Tool force_reset called before server ready")
@@ -208,7 +208,7 @@ class TradingMemoryServer:
                     "message": f"Failed to reset symbol: {str(e)}",
                 }
 
-        @self.app.tool()
+        @self.app.tool(description="Check server and Redis health status")
         async def health_check() -> Dict[str, Any]:
             try:
                 redis_healthy = await self.memory_store.health_check()
