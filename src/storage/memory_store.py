@@ -7,7 +7,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Union
 
 from src.config import settings
-from src.storage.redis_client import RedisClient
+from src.storage.redis_client import FixedRedisClient
 
 
 class MemoryStore:
@@ -16,7 +16,7 @@ class MemoryStore:
     def __init__(self):
         """Initialize memory store."""
         self.logger = logging.getLogger(__name__)
-        self.redis = RedisClient()
+        self.redis = FixedRedisClient()
         
         # Valid decision types and bias values
         self.valid_decision_types = {
@@ -25,6 +25,39 @@ class MemoryStore:
         }
         self.valid_bias_values = {"bullish", "bearish", "neutral"}
         self.valid_market_conditions = {"normal", "volatile", "choppy"}
+    
+    def _parse_datetime(self, dt_value: Any) -> Optional[datetime]:
+        """Safely parse datetime from various formats."""
+        if dt_value is None or str(dt_value).lower() == 'none':
+            return None
+        
+        if isinstance(dt_value, datetime):
+            return dt_value
+        
+        if isinstance(dt_value, str):
+            try:
+                # Try ISO format first
+                return datetime.fromisoformat(dt_value)
+            except ValueError:
+                try:
+                    # Try parsing as timestamp
+                    return datetime.fromtimestamp(float(dt_value), tz=timezone.utc)
+                except (ValueError, TypeError):
+                    self.logger.warning(f"Could not parse datetime: {dt_value}")
+                    return None
+        
+        try:
+            # Try converting to float (timestamp)
+            return datetime.fromtimestamp(float(dt_value), tz=timezone.utc)
+        except (ValueError, TypeError):
+            self.logger.warning(f"Could not parse datetime: {dt_value}")
+            return None
+    
+    def _serialize_datetime(self, dt: datetime) -> str:
+        """Serialize datetime to ISO format string."""
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.isoformat()
     
     async def initialize(self) -> None:
         """Initialize storage connections."""
@@ -199,13 +232,20 @@ class MemoryStore:
             bias_data = await self.redis.get_json(self._get_bias_key(symbol))
             
             if bias_data:
-                # Calculate time held
-                established_at = datetime.fromisoformat(bias_data["established_at"])
-                now = datetime.now(timezone.utc)
-                time_held = now - established_at
-                time_held_minutes = int(time_held.total_seconds() / 60)
+                # Calculate time held using robust datetime parsing
+                established_at = self._parse_datetime(bias_data.get("established_at"))
                 
-                bias_data["time_held_minutes"] = time_held_minutes
+                if established_at:
+                    now = datetime.now(timezone.utc)
+                    time_held = now - established_at
+                    time_held_minutes = int(time_held.total_seconds() / 60)
+                    bias_data["time_held_minutes"] = time_held_minutes
+                    # Ensure established_at is properly serialized
+                    bias_data["established_at"] = self._serialize_datetime(established_at)
+                else:
+                    time_held_minutes = 0
+                    bias_data["time_held_minutes"] = time_held_minutes
+                    bias_data["established_at"] = self._serialize_datetime(datetime.now(timezone.utc))
                 
                 self.logger.debug(
                     f"Retrieved bias for {symbol}: {bias_data.get('bias')} held for {time_held_minutes} minutes"
@@ -220,9 +260,14 @@ class MemoryStore:
     async def store_bias(self, symbol: str, bias_data: Dict[str, Any]) -> bool:
         """Store bias for symbol."""
         try:
-            # Add timestamp if not present
+            # Add timestamp if not present and ensure proper serialization
             if "established_at" not in bias_data:
-                bias_data["established_at"] = datetime.now(timezone.utc).isoformat()
+                bias_data["established_at"] = self._serialize_datetime(datetime.now(timezone.utc))
+            else:
+                # Ensure existing timestamp is properly formatted
+                dt = self._parse_datetime(bias_data["established_at"])
+                if dt:
+                    bias_data["established_at"] = self._serialize_datetime(dt)
             
             # Validate bias data
             validated_data = self._validate_bias_data(bias_data)
@@ -378,10 +423,11 @@ class MemoryStore:
             recent_changes = []
             
             for change in all_changes:
-                change_time = datetime.fromisoformat(change["timestamp"])
-                time_diff = cutoff_time - change_time
-                if time_diff.total_seconds() <= lookback_minutes * 60:
-                    recent_changes.append(change)
+                change_time = self._parse_datetime(change.get("timestamp"))
+                if change_time:
+                    time_diff = cutoff_time - change_time
+                    if time_diff.total_seconds() <= lookback_minutes * 60:
+                        recent_changes.append(change)
             
             return recent_changes
             
