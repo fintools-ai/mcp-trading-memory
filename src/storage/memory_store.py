@@ -260,14 +260,26 @@ class MemoryStore:
     async def store_bias(self, symbol: str, bias_data: Dict[str, Any]) -> bool:
         """Store bias for symbol."""
         try:
-            # Add timestamp if not present and ensure proper serialization
-            if "established_at" not in bias_data:
-                bias_data["established_at"] = self._serialize_datetime(datetime.now(timezone.utc))
+            # Check if bias is actually changing to preserve established_at timestamp
+            # Use direct Redis call to avoid circular dependency with get_current_bias()
+            current_bias_raw = await self.redis.get_json(self._get_bias_key(symbol))
+            current_bias = current_bias_raw.get("bias") if current_bias_raw else None
+            new_bias = bias_data.get("bias")
+            
+            # If bias hasn't changed, preserve the existing established_at timestamp
+            if current_bias == new_bias and current_bias_raw and "established_at" in current_bias_raw:
+                bias_data["established_at"] = current_bias_raw["established_at"]
+                self.logger.info(f"Bias unchanged for {symbol} ({new_bias}), preserving timestamp: {bias_data['established_at']}")
             else:
-                # Ensure existing timestamp is properly formatted
-                dt = self._parse_datetime(bias_data["established_at"])
-                if dt:
-                    bias_data["established_at"] = self._serialize_datetime(dt)
+                # Bias is changing or this is first establishment - set new timestamp
+                if "established_at" not in bias_data:
+                    bias_data["established_at"] = self._serialize_datetime(datetime.now(timezone.utc))
+                    self.logger.info(f"Bias changed for {symbol}: {current_bias} -> {new_bias}, new timestamp: {bias_data['established_at']}")
+                else:
+                    # Ensure existing timestamp is properly formatted
+                    dt = self._parse_datetime(bias_data["established_at"])
+                    if dt:
+                        bias_data["established_at"] = self._serialize_datetime(dt)
             
             # Validate bias data
             validated_data = self._validate_bias_data(bias_data)
